@@ -23,10 +23,15 @@ class EscalaLiturgicaView extends StatefulWidget {
 class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
   final FirestoreService _service = FirestoreService();
   final _searchController = TextEditingController();
+
   List<EscalaLiturgica> _todasEscalas = [];
   List<EscalaLiturgica> _escalasFiltradas = [];
+
   bool _buscando = false;
   bool _offline = false;
+
+  // NOVO: toggle para filtrar por “Recentes”
+  bool _filtrarRecentes = false;
 
   @override
   void initState() {
@@ -40,6 +45,17 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
     setState(() {
       _offline = connectivityResult == ConnectivityResult.none;
     });
+  }
+
+  // Helpers de data
+  DateTime _hojeSemHora() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day);
+  }
+
+  DateTime? _parseDate(String iso) {
+    final d = DateTime.tryParse(iso);
+    return d == null ? null : DateTime(d.year, d.month, d.day);
   }
 
   @override
@@ -115,6 +131,22 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
                   onPressed: _filtrarEscalasPorNome,
                   child: const Text("Buscar"),
                 ),
+                const SizedBox(width: 8),
+                // NOVO: botão “Recentes”
+                ElevatedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _filtrarRecentes = !_filtrarRecentes;
+                      // Permitimos combinar com busca; não mexemos no _buscando aqui
+                    });
+                  },
+                  icon: const Icon(Icons.filter_alt),
+                  label: const Text('Recentes'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _filtrarRecentes ? Colors.teal : null,
+                    foregroundColor: _filtrarRecentes ? Colors.white : null,
+                  ),
+                ),
                 IconButton(
                   icon: const Icon(Icons.clear),
                   tooltip: 'Limpar filtro',
@@ -122,6 +154,8 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
                     _searchController.clear();
                     setState(() {
                       _buscando = false;
+                      _filtrarRecentes = false;
+                      _escalasFiltradas = _todasEscalas;
                     });
                   },
                 )
@@ -136,20 +170,47 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
                   return const Center(child: CircularProgressIndicator());
                 }
 
+                // Base
                 _todasEscalas = snapshot.data!;
-                _escalasFiltradas =
-                    _buscando ? _escalasFiltradas : _todasEscalas;
 
-                if (_escalasFiltradas.isEmpty) {
-                  return const Center(
-                      child: Text("Nenhuma escala encontrada."));
+                // ORDENAR: novas em cima (data desc)
+                _todasEscalas.sort((a, b) {
+                  final da = _parseDate(a.data);
+                  final db = _parseDate(b.data);
+                  if (da == null && db == null) return 0;
+                  if (da == null) return 1; // sem data vai para baixo
+                  if (db == null) return -1;
+                  return db.compareTo(da); // desc
+                });
+
+                // Aplicar filtro "Recentes" (datas > hoje)
+                List<EscalaLiturgica> base = _todasEscalas;
+                if (_filtrarRecentes) {
+                  final hoje = _hojeSemHora();
+                  base = base.where((e) {
+                    final d = _parseDate(e.data);
+                    return d != null && d.isAfter(hoje);
+                  }).toList();
+                }
+
+                // Se estamos em modo busca, usamos os resultados; senão, a base
+                final listaParaExibir = _buscando ? _escalasFiltradas : base;
+
+                if (listaParaExibir.isEmpty) {
+                  return const Center(child: Text("Nenhuma escala encontrada."));
                 }
 
                 return ListView.builder(
                   padding: const EdgeInsets.all(12),
-                  itemCount: _escalasFiltradas.length,
+                  itemCount: listaParaExibir.length,
                   itemBuilder: (context, index) {
-                    final escala = _escalasFiltradas[index];
+                    final escala = listaParaExibir[index];
+
+                    final d = _parseDate(escala.data);
+                    final hoje = _hojeSemHora();
+                    // Antigas = antes ou igual a hoje
+                    final isAntiga = (d == null) ? false : !d.isAfter(hoje);
+
                     return FutureBuilder<Map<String, Leitor>>(
                       future: _buscarLeitoresDaEscala(escala),
                       builder: (context, snapshotLeitores) {
@@ -161,7 +222,7 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
                         }
 
                         final leitores = snapshotLeitores.data!;
-                        return _buildCard(escala, leitores);
+                        return _buildCard(escala, leitores, isAntiga);
                       },
                     );
                   },
@@ -194,10 +255,12 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
     if (nomeBuscado.isEmpty) {
       setState(() {
         _buscando = false;
+        _escalasFiltradas = _todasEscalas;
       });
       return;
     }
 
+    // Procurar por nome dos leitores envolvidos na escala
     List<EscalaLiturgica> resultados = [];
 
     for (final escala in _todasEscalas) {
@@ -219,15 +282,32 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
       }
     }
 
+    // Se o filtro "Recentes" estiver activo, combinamos com ele
+    if (_filtrarRecentes) {
+      final hoje = _hojeSemHora();
+      resultados = resultados.where((e) {
+        final d = _parseDate(e.data);
+        return d != null && d.isAfter(hoje);
+      }).toList();
+    }
+
     setState(() {
       _escalasFiltradas = resultados;
       _buscando = true;
     });
   }
 
-  Widget _buildCard(EscalaLiturgica escala, Map<String, Leitor> leitores) {
+  Widget _buildCard(
+    EscalaLiturgica escala,
+    Map<String, Leitor> leitores,
+    bool isAntiga,
+  ) {
+    final Color bg = isAntiga ? Colors.grey.shade900 : Colors.white;
+    final Color primaryText = isAntiga ? Colors.white : Colors.black87;
+    final Color secondaryText = isAntiga ? Colors.grey.shade300 : Colors.grey;
+
     return Card(
-      color: Colors.white,
+      color: bg,
       margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       elevation: 4,
@@ -240,19 +320,28 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.calendar_month_rounded,
-                    size: 32, color: Colors.teal),
+                Icon(
+                  Icons.calendar_month_rounded,
+                  size: 32,
+                  color: isAntiga ? Colors.teal.shade200 : Colors.teal,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(escala.domingo,
-                          style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w600)),
-                      Text(_formatarData(escala.data),
-                          style: const TextStyle(
-                              fontSize: 14, color: Colors.grey)),
+                      Text(
+                        escala.domingo,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: primaryText,
+                        ),
+                      ),
+                      Text(
+                        _formatarData(escala.data),
+                        style: TextStyle(fontSize: 14, color: secondaryText),
+                      ),
                     ],
                   ),
                 ),
@@ -260,38 +349,71 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
                   Row(
                     children: [
                       IconButton(
-                        icon: const Icon(Icons.edit, color: Colors.indigo),
+                        icon: Icon(
+                          Icons.edit,
+                          color:
+                              isAntiga ? Colors.indigo.shade200 : Colors.indigo,
+                        ),
                         tooltip: 'Editar escala',
                         onPressed: () {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) => EscalaForm(
-                                    escala: escala, usuario: widget.usuario)),
+                              builder: (_) => EscalaForm(
+                                escala: escala,
+                                usuario: widget.usuario,
+                              ),
+                            ),
                           );
                         },
                       ),
-                      // IconButton(
-                      //   icon: const Icon(Icons.delete_outline_rounded,
-                      //       color: Colors.red),
-                      //   tooltip: 'Excluir escala',
-                      //   onPressed: () => _confirmarExclusao(escala),
-                      // ),
                     ],
                   )
               ],
             ),
-            const Divider(height: 24),
-            _leitorLinhaCond("Introdutor", escala.introdutorId, leitores),
-            _leitorLinhaCond("1ª Leitura (Língua Local)",
-                escala.primeiraLeituraLLId, leitores),
+            Divider(height: 24, color: isAntiga ? Colors.teal.shade200 : Colors.teal),
             _leitorLinhaCond(
-                "1ª Leitura (Português)", escala.primeiraLeituraPTId, leitores),
-            _leitorLinhaCond("2ª Leitura (Língua Local)",
-                escala.segundaLeituraLLId, leitores),
+              "Introdutor",
+              escala.introdutorId,
+              leitores,
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+            ),
             _leitorLinhaCond(
-                "2ª Leitura (Português)", escala.segundaLeituraPTId, leitores),
-            _leitorLinhaCond("Evangelho", escala.evangelhoId, leitores),
+              "1ª Leitura (Língua Local)",
+              escala.primeiraLeituraLLId,
+              leitores,
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+            ),
+            _leitorLinhaCond(
+              "1ª Leitura (Português)",
+              escala.primeiraLeituraPTId,
+              leitores,
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+            ),
+            _leitorLinhaCond(
+              "2ª Leitura (Língua Local)",
+              escala.segundaLeituraLLId,
+              leitores,
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+            ),
+            _leitorLinhaCond(
+              "2ª Leitura (Português)",
+              escala.segundaLeituraPTId,
+              leitores,
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+            ),
+            _leitorLinhaCond(
+              "Evangelho",
+              escala.evangelhoId,
+              leitores,
+              primaryText: primaryText,
+              secondaryText: secondaryText,
+            ),
           ],
         ),
       ),
@@ -299,7 +421,12 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
   }
 
   Widget _leitorLinhaCond(
-      String label, String? id, Map<String, Leitor> leitores) {
+    String label,
+    String? id,
+    Map<String, Leitor> leitores, {
+    required Color primaryText,
+    required Color secondaryText,
+  }) {
     if (id == null || id.trim().isEmpty) return const SizedBox.shrink();
 
     final leitor = leitores[id];
@@ -308,17 +435,25 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label,
-              style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: Colors.teal)),
+          Text(
+            label,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 14,
+              color: Colors.teal.shade300,
+            ),
+          ),
           const SizedBox(height: 2),
-          Text(leitor?.nome ?? '—', style: const TextStyle(fontSize: 15)),
-            if (widget.usuario != null)
-              if (leitor?.contacto != null && leitor!.contacto.trim().isNotEmpty)
-                Text(leitor.contacto,
-                    style: const TextStyle(fontSize: 13, color: Colors.grey)),
+          Text(
+            leitor?.nome ?? '—',
+            style: TextStyle(fontSize: 15, color: primaryText),
+          ),
+          if (widget.usuario != null)
+            if (leitor?.contacto != null && leitor!.contacto.trim().isNotEmpty)
+              Text(
+                leitor.contacto,
+                style: TextStyle(fontSize: 13, color: secondaryText),
+              ),
         ],
       ),
     );
@@ -329,35 +464,6 @@ class _EscalaLiturgicaViewState extends State<EscalaLiturgicaView> {
     if (data == null) return isoDate;
     return DateFormat("EEEE, dd 'de' MMMM", 'pt_PT').format(data);
   }
-
-  // Future<void> _confirmarExclusao(EscalaLiturgica escala) async {
-  //   final confirmar = await showDialog<bool>(
-  //     context: context,
-  //     builder: (context) => AlertDialog(
-  //       title: const Text('Excluir Escala'),
-  //       content: const Text('Tem certeza que deseja excluir esta escala?'),
-  //       actions: [
-  //         TextButton(
-  //           child: const Text('Cancelar'),
-  //           onPressed: () => Navigator.pop(context, false),
-  //         ),
-  //         TextButton(
-  //           child: const Text('Excluir', style: TextStyle(color: Colors.red)),
-  //           onPressed: () => Navigator.pop(context, true),
-  //         ),
-  //       ],
-  //     ),
-  //   );
-
-  //   if (confirmar == true) {
-  //     await _service.deleteEscalaLiturgica(escala.id);
-  //     if (mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         const SnackBar(content: Text('Escala excluída com sucesso')),
-  //       );
-  //     }
-  //   }
-  // }
 
   Future<bool> isOffline() async {
     final result = await Connectivity().checkConnectivity();
