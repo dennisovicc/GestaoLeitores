@@ -9,7 +9,7 @@ plugins {
 android {
     namespace = "com.example.gestao_leitores"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "27.0.12077973" // Definindo explicitamente a versão do NDK
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -39,3 +39,4 @@ android {
 flutter {
     source = "../.."
 }
+

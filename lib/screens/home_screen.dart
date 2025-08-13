@@ -5,6 +5,7 @@ import 'package:gestao_leitores/screens/escala_form.dart';
 import 'package:gestao_leitores/screens/escala_liturgica_view.dart';
 import 'package:gestao_leitores/screens/leitor_form.dart';
 import 'package:gestao_leitores/screens/leitores_list.dart';
+import 'package:gestao_leitores/screens/ranking_page.dart';
 import 'package:gestao_leitores/screens/rating_service.dart';
 import 'package:gestao_leitores/screens/register_form.dart';
 import 'package:gestao_leitores/services/firestore_service.dart';
@@ -206,23 +207,29 @@ class _HomeScreenState extends State<HomeScreen> {
 
               const SizedBox(height: 8),
 
-              // ---------- BOTÃO: RANKING (apenas redireciona) ----------
-              InkWell(
-                borderRadius: BorderRadius.circular(12),
-                onTap: _abrirRanking,
-                child: Card(
-                  color: Colors.amber.shade50,
-                  elevation: 2,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const ListTile(
-                    leading: Icon(Icons.leaderboard, color: Colors.teal),
-                    title: Text('Ranking de Leitores'),
-                    // sem subtitle – só o título, como pediste
-                  ),
-                ),
-              ),
+                 const SizedBox(height: 8),
+
+        // ---------- BOTÃO: RANKING DE LEITORES (novo botão) ----------
+        InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => RankingPage()), // Navegação para o RankingPage
+            );
+          },
+          child: Card(
+            color: Colors.amber.shade50,
+            elevation: 2,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const ListTile(
+              leading: Icon(Icons.leaderboard, color: Colors.teal),
+              title: Text('Ranking de Leitores'),
+            ),
+          ),
+        ),
             ],
           );
         },
